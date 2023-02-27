@@ -27,19 +27,20 @@ Usage - formats:
                                  yolov5s_edgetpu.tflite     # TensorFlow Edge TPU
                                  yolov5s_paddle_model       # PaddlePaddle
 """
-import multiprocessing
-from multiprocessing import Queue
 import argparse
+import multiprocessing
 import os
 import sys
 import time
+from multiprocessing import Queue
 from pathlib import Path
+
+import numpy as np
 import pydirectinput
 import torch
-import numpy as np
+import win32con
 import win32gui
 import win32ui
-import win32con
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # YOLOv5 root directory
@@ -48,14 +49,14 @@ if str(ROOT) not in sys.path:
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
 from models.common import DetectMultiBackend
-from utils.dataloaders import IMG_FORMATS, VID_FORMATS, LoadImages, LoadScreenshots, LoadStreams
-from utils.general import (LOGGER, Profile, check_file, check_img_size, check_imshow, check_requirements, colorstr, cv2,
-                           increment_path, non_max_suppression, print_args, scale_boxes, strip_optimizer, xyxy2xywh)
-from utils.plots import Annotator, colors, save_one_box
+from utils.general import (LOGGER, Profile, check_img_size, check_requirements, cv2,
+                           non_max_suppression, print_args, scale_boxes, strip_optimizer, xyxy2xywh)
+from utils.plots import Annotator, colors
 from utils.torch_utils import select_device, smart_inference_mode
+from utils.augmentations import letterbox
 
 # 以下为GRAB_screen的初始化参数
-xywh = [640, 284, 640, 512]
+xywh = [640, 284, 640, 1000]
 hwin = win32gui.GetDesktopWindow()
 hwindc = win32gui.GetWindowDC(hwin)
 srcdc = win32ui.CreateDCFromHandle(hwindc)
@@ -98,6 +99,7 @@ def GRAB_screen():
     img = np.frombuffer(signedIntsArray, np.uint8)
     img.shape = (xywh[3], xywh[2], 4)
     im0s = cv2.cvtColor(img, cv2.COLOR_BGRA2RGB)
+    im0s, _1, _2 = letterbox(im0s, auto=False) # 缩放为 （640 640）大小
     im = np.asarray(im0s)  # 转换为np.array形式[w,h,c]
     im = im.swapaxes(0, 2)  # 交换为[c,h,w]
     im = im.swapaxes(1, 2)  # 交换为[c,w,h]
@@ -138,7 +140,7 @@ def run(
     img_size = check_img_size(img_size, s=stride)  # check image size
     # Data loader
     bs = 1  # batch_size
-    dataset = LoadScreenshots(source, img_size=img_size, stride=stride, auto=pt)
+    '''dataset = LoadScreenshots(source, img_size=img_size, stride=stride, auto=pt)'''
     # Run inference
     model.warmup(imgsz=(1 if pt or model.triton else bs, 3, *img_size))  # warmup
     seen, windows, dt = 0, [], (Profile(), Profile(), Profile())
@@ -273,45 +275,3 @@ if __name__ == "__main__":
     SHOW.start()
     MOVE.start()
 
-'''
-测试数据（3060 Laptop，i7 12700h）：
-
-##########################################显示图片#################################################
-无目标时(无鼠标移动)(调用win32api截图):
-    异步显示图片:
-        debug:512x640 (no detections), inference: 6.6ms, total: 20.23ms
-        debug:512x640 (no detections), inference: 6.6ms, total: 20.77ms
-        debug:512x640 (no detections), inference: 9.9ms, total: 14.29ms
-        debug:512x640 (no detections), inference: 6.0ms, total: 20.88ms
-    同步显示图片:
-        debug:512x640 (no detections), inference: 9.4ms, total: 28.12ms
-        debug:512x640 (no detections), inference: 9.3ms, total: 27.71ms
-        debug:512x640 (no detections), inference: 9.3ms, total: 34.73ms
-        debug:512x640 (no detections), inference: 9.3ms, total: 28.24ms
-        
-##########################################移动鼠标################################################
-无实时预览时(3个目标)(关闭鼠标暂停)
-    同步移动鼠标
-         SYNC[x y mouse_move_x mouse_move_y ] 305 304 243 -16 -7
-        screen 0 (LTWH): 640,304,640,512: 512x640 4 persons, inference: 12.5ms, total: 128.05ms
-            SYNC[x y mouse_move_x mouse_move_y ] 305 304 243 -16 -7
-        screen 0 (LTWH): 640,304,640,512: 512x640 4 persons, inference: 6.0ms, total: 112.29ms
-            SYNC[x y mouse_move_x mouse_move_y ] 305 304 243 -16 -7
-        screen 0 (LTWH): 640,304,640,512: 512x640 4 persons, inference: 12.0ms, total: 124.37ms
-            SYNC[x y mouse_move_x mouse_move_y ] 305 304 243 -16 -7
-        screen 0 (LTWH): 640,304,640,512: 512x640 4 persons, inference: 23.9ms, total: 145.60ms
-    异步移动鼠标
-        暂时不考虑，pydirectinput 效率似乎比较低下，会有很明显的滞后
-
-##########################################屏幕截图####################################################
-    使用yolo自带的屏幕获取(拖动森林图片移动)
-        screen 0 (LTWH): 640,304,640,512: 512x640 (no detections), inference: 13.5ms, total: 21.08ms
-        screen 0 (LTWH): 640,304,640,512: 512x640 (no detections), inference: 8.9ms, total: 27.76ms
-        screen 0 (LTWH): 640,304,640,512: 512x640 (no detections), inference: 10.1ms, total: 20.67ms
-        screen 0 (LTWH): 640,304,640,512: 512x640 (no detections), inference: 8.4ms, total: 20.55ms
-    调用win32api获取屏幕(拖动森林图片移动)
-        debug:512x640 (no detections), inference: 8.9ms, total: 21.25ms
-        debug:512x640 (no detections), inference: 11.7ms, total: 19.96ms
-        debug:512x640 (no detections), inference: 8.9ms, total: 20.19ms
-        debug:512x640 (no detections), inference: 10.5ms, total: 20.80ms
-'''
