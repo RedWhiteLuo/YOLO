@@ -1,7 +1,5 @@
-# YOLOv5 🚀 by Ultralytics, GPL-3.0 license
 """
 Run YOLOv5 detection inference on images, videos, directories, globs, YouTube, webcam, streams, etc.
-
 Usage - sources:
     $ python detect.py --weights yolov5s.pt --source 0                               # webcam
                                                      img.jpg                         # image
@@ -13,7 +11,6 @@ Usage - sources:
                                                      'path/*.jpg'                    # glob
                                                      'https://youtu.be/Zgi9g1ksQHc'  # YouTube
                                                      'rtsp://example.com/media.mp4'  # RTSP, RTMP, HTTP stream
-
 Usage - formats:
     $ python detect.py --weights yolov5s.pt                 # PyTorch
                                  yolov5s.torchscript        # TorchScript
@@ -56,7 +53,9 @@ from utils.torch_utils import select_device, smart_inference_mode
 from utils.augmentations import letterbox
 
 # 以下为GRAB_screen的初始化参数
-xywh = [640, 284, 640, 1000]
+screen_w, screen_h = 1920, 1080     # 屏幕的分辨率
+grab_w, grab_h = 1080, 1080   # 获取框的长和宽
+xywh = [int((screen_w-grab_w)/2), int((screen_h-grab_h)/2), grab_w, grab_h]
 hwin = win32gui.GetDesktopWindow()
 hwindc = win32gui.GetWindowDC(hwin)
 srcdc = win32ui.CreateDCFromHandle(hwindc)
@@ -64,9 +63,6 @@ memdc = srcdc.CreateCompatibleDC()
 bmp = win32ui.CreateBitmap()
 bmp.CreateCompatibleBitmap(srcdc, xywh[2], xywh[3])
 memdc.SelectObject(bmp)
-
-# 此处需要手动输入长宽（用于MOUSE_move）
-screen_w, screen_h = 640, 512
 # 关闭安全限制
 pydirectinput.PAUSE = 0.0
 
@@ -87,33 +83,37 @@ def MOUSE_move(data):
                 data.get()
         choose_close = data.get()
         if choose_close[1] != 0:  # 此处是用来防止归位后 x,y 都等于“0”的情况
-            pydirectinput.moveRel(xOffset=int(choose_close[1] - screen_w / 2),
-                                  yOffset=int(choose_close[2] - screen_h / 2), relative=True)
+            pydirectinput.moveRel(xOffset=int(choose_close[1] - xywh[2] / 2),
+                                  yOffset=int(choose_close[2] - xywh[3] / 2), relative=True)
             print("ASYNC[x y mouse_move_x mouse_move_y ]", choose_close[0], choose_close[1], choose_close[2],
-                  int(choose_close[1] - (screen_w / 2)), int(choose_close[2] - (screen_h / 2)))
+                  int(choose_close[1] - (xywh[2] / 2)), int(choose_close[2] - (xywh[3] / 2)))
 
 
-def GRAB_screen():
-    memdc.BitBlt((0, 0), (xywh[2], xywh[3]), srcdc, (xywh[0], xywh[1]), win32con.SRCCOPY)
-    signedIntsArray = bmp.GetBitmapBits(True)
-    img = np.frombuffer(signedIntsArray, np.uint8)
-    img.shape = (xywh[3], xywh[2], 4)
-    im0s = cv2.cvtColor(img, cv2.COLOR_BGRA2RGB)
-    im0s, _1, _2 = letterbox(im0s, auto=False) # 缩放为 （640 640）大小
-    im = np.asarray(im0s)  # 转换为np.array形式[w,h,c]
-    im = im.swapaxes(0, 2)  # 交换为[c,h,w]
-    im = im.swapaxes(1, 2)  # 交换为[c,w,h]
-    im[[0, 1, 2]] = im[[2, 1, 0]]  # 将RGB 转换为 BGR
-    return im, im0s
+def GRAB_screen(img_1, img_2):
+    while True:
+        memdc.BitBlt((0, 0), (xywh[2], xywh[3]), srcdc, (xywh[0], xywh[1]), win32con.SRCCOPY)
+        signedIntsArray = bmp.GetBitmapBits(True)
+        img = np.frombuffer(signedIntsArray, np.uint8)
+        img.shape = (xywh[3], xywh[2], 4)
+        im0s = cv2.cvtColor(img, cv2.COLOR_BGRA2RGB)
+        im0s, _1, _2 = letterbox(im0s, auto=False)  # 缩放为 （640 640）大小
+        im = np.asarray(im0s)  # 转换为np.array形式[w,h,c]
+        im = im.swapaxes(0, 2)  # 交换为[c,h,w]
+        im = im.swapaxes(1, 2)  # 交换为[c,w,h]
+        im[[0, 1, 2]] = im[[2, 1, 0]]  # 将RGB 转换为 BGR
+        img_1.put(im)   # 转换后图片
+        img_2.put(im0s)     # 原图
 
 
 @smart_inference_mode()
 def run(
         show_img,
         mouse_move,
+        grab_scr_1,
+        grab_scr_2,
         weights=ROOT / 'yolov5s.pt',  # model path or triton URL
         source=ROOT / 'data/images',  # file/dir/URL/glob/screen/0(webcam)
-        data=ROOT / 'data/coco128.yaml',  # dataset.yaml path
+        data=ROOT / 'data/apex.yaml',  # dataset.yaml path
         img_size=(640, 640),  # inference size (height, width)
         conf_thres=0.25,  # confidence threshold
         iou_thres=0.45,  # NMS IOU threshold
@@ -148,12 +148,13 @@ def run(
     end = time.perf_counter()
     '''for path, im, im0s, vid_cap, s in dataset:'''
     while True:
-        im, im0s = GRAB_screen()
-        s = "debug:"
-        path = "0"
         start = time.perf_counter()
         time_count = start - end
         end = time.perf_counter()
+        im = grab_scr_1.get()
+        im0s = grab_scr_2.get()
+        s = "debug:"
+        path = "0"
         with dt[0]:
             im = torch.from_numpy(im).to(model.device)
             im = im.half() if model.fp16 else im.float()  # uint8 to fp16/32
@@ -166,7 +167,6 @@ def run(
         # NMS
         with dt[2]:
             predict = non_max_suppression(predict, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
-
         # Process predictions
         for i, det in enumerate(predict):  # per image
             seen += 1
@@ -190,8 +190,8 @@ def run(
                     if ppl_list[0] > 0.7 and ppl_list[1] > 0.7:
                         continue
                     # 获得检测框的中心，以及该中心距离屏幕中心的距离
-                    ppl_x, ppl_y = int((ppl_list[0]) * screen_w), int((ppl_list[1] - ppl_list[3]*0.25) * screen_h)
-                    ppl_distance = int(ppl_x - screen_w / 2) ** 2 + int(ppl_y - screen_h / 2) ** 2  # 用来判断与头的距离
+                    ppl_x, ppl_y = int((ppl_list[0]) * xywh[2]), int((ppl_list[1] - ppl_list[3] * 0.25) * xywh[3])
+                    ppl_distance = int(ppl_x - xywh[2] / 2) ** 2 + int(ppl_y - xywh[3] / 2) ** 2  # 用来判断与头的距离
                     # 用来保存在一张图片中距离中心点最近的坐标框
                     if ppl_distance < choose_close[0]:
                         choose_close[0], choose_close[1], choose_close[2] = ppl_distance, ppl_x, ppl_y
@@ -205,10 +205,10 @@ def run(
                     mouse_move.put(choose_close)
                 if move_mouse_sync:  # 同步
                     if choose_close[1] != 0:
-                        pydirectinput.moveRel(xOffset=int(choose_close[1] - screen_w / 2),
-                                              yOffset=int(choose_close[2] - screen_h / 2), relative=True)
+                        pydirectinput.moveRel(xOffset=int(choose_close[1] - xywh[2] / 2),
+                                              yOffset=int(choose_close[2] - xywh[3] / 2), relative=True)
                         print("SYNC[x y mouse_move_x mouse_move_y ]", choose_close[0], choose_close[1], choose_close[2],
-                              int(choose_close[1] - (screen_w / 2)), int(choose_close[2] - (screen_h / 2)))
+                              int(choose_close[1] - (xywh[2] / 2)), int(choose_close[2] - (xywh[3] / 2)))
                 if shoot:
                     if choose_close[0] <= 200:
                         pydirectinput.click()
@@ -220,21 +220,16 @@ def run(
             if view_img_sync:  # 同步
                 cv2.imshow("THIS IS SYNC RESULT", annotator.result())
                 cv2.waitKey(1)  # 1 millisecond
-
         # Print time
         LOGGER.info(
             f"{s}{'' if len(det) else '(no detections), '}inference: {dt[1].dt * 1E3:.1f}ms, total: {time_count * 1E3:.2f}ms")
 
-    # 由于是死循环所以这个选项没有用
-    if update:
-        strip_optimizer(weights[0])  # update model (to fix SourceChangeWarning)
-
 
 def parse_opt():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', nargs='+', type=str, default=ROOT / 'yolov5s.pt', help='model path or triton URL')
+    parser.add_argument('--weights', nargs='+', type=str, default=ROOT / 'best.pt', help='model path or triton URL')
     parser.add_argument('--source', type=str, default=ROOT / 'screen', help='file/dir/URL/glob/screen/0(webcam)')
-    parser.add_argument('--data', type=str, default=ROOT / 'data/coco128.yaml', help='(optional) dataset.yaml path')
+    parser.add_argument('--data', type=str, default=ROOT / 'data/apex.yaml', help='(optional) dataset.yaml path')
     parser.add_argument('--img-size', '--img', '--img-size', nargs='+', type=int, default=[640],
                         help='inference size h,w')
     parser.add_argument('--conf-thres', type=float, default=0.25, help='confidence threshold')
@@ -259,19 +254,22 @@ def parse_opt():
     return opt
 
 
-def main(show_img_0, mouse_move_0, opt_0):
+def main(show_img_0, mouse_move_0, grab_scr_1_0, grab_scr_2_0, opt_0):
     check_requirements(exclude=('tensorboard', 'thop'))
-    run(show_img_0, mouse_move_0, **vars(opt_0))
+    run(show_img_0, mouse_move_0, grab_scr_1_0, grab_scr_2_0, **vars(opt_0))
 
 
 if __name__ == "__main__":
     opt = parse_opt()
     show_img = Queue(5)
     mouse_move = Queue(5)
-    MAIN = multiprocessing.Process(target=main, args=(show_img, mouse_move, opt))
+    grab_scr_1 = Queue(3)
+    grab_scr_2 = Queue(3)
+    MAIN = multiprocessing.Process(target=main, args=(show_img, mouse_move, grab_scr_1, grab_scr_2, opt))
     SHOW = multiprocessing.Process(target=IMG_show, args=(show_img,))
+    GRAB = multiprocessing.Process(target=GRAB_screen, args=(grab_scr_1, grab_scr_2,))
     MOVE = multiprocessing.Process(target=MOUSE_move, args=(mouse_move,))
+    GRAB.start()
     MAIN.start()
     SHOW.start()
     MOVE.start()
-
