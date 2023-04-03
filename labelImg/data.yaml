@@ -1,0 +1,9 @@
+path: ./data/Convert/  # 数据集的根目录
+train: train.txt  # 用于train的图片
+val: val.txt  # 用于val的图片
+test:  test.txt # 用于test的图片
+# Classes
+names:
+  0: A
+  1: B
+  2: C
